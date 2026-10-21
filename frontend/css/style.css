@@ -1501,6 +1501,11 @@ tr:hover td { background: rgba(79,111,82,0.055); }
   }
 }
 
+.wechat-float svg {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+
 /* 装饰纹路 (国风) */
 .grain-bg {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='1' height='1' fill='%23000' opacity='.03'/%3E%3C/svg%3E");
