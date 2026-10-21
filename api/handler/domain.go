@@ -25,6 +25,11 @@ func NewDomainHandler(s *store.Store, smtpIP, smtpHostname string) *DomainHandle
 }
 
 // getServerIP 优先读 DB 设置，其次环境变量传入的值
+// mxCheckIPs 返回 MX 校验可接受的 IP（DB 与环境变量），与后台轮询保持一致
+func (h *DomainHandler) mxCheckIPs(ctx context.Context) string {
+	return h.store.MXCheckServerIPs(ctx, h.cfgIP)
+}
+
 func (h *DomainHandler) getServerIP(ctx context.Context) string {
 	if ip, err := h.store.GetSetting(ctx, "smtp_server_ip"); err == nil && ip != "" {
 		return ip
@@ -186,7 +191,7 @@ func (h *DomainHandler) MXImport(c *gin.Context) {
 	hostname := h.getServerHostname(c.Request.Context())
 
 	// DNS MX 检测
-	matched, mxDetails, mxStatus := store.CheckDomainMXDetails(req.Domain, serverIP)
+	matched, mxDetails, mxStatus := store.CheckDomainMXDetails(req.Domain, h.mxCheckIPs(c.Request.Context()))
 	supportsSingle, supportsWildcard := store.DomainCapabilitiesFromMX(mxDetails)
 
 	if !matched && !req.Force {
@@ -240,7 +245,7 @@ func (h *DomainHandler) MXRegister(c *gin.Context) {
 	dnsRequired := dnsRecordsForDomain(req.Domain, serverIP, hostname)
 
 	// 先尝试立即检测；通过则直接激活
-	matched, mxDetails, mxStatus := store.CheckDomainMXDetails(req.Domain, serverIP)
+	matched, mxDetails, mxStatus := store.CheckDomainMXDetails(req.Domain, h.mxCheckIPs(c.Request.Context()))
 	supportsSingle, supportsWildcard := store.DomainCapabilitiesFromMX(mxDetails)
 	if matched {
 		domain, err := h.store.AddDomainWithCapabilities(c.Request.Context(), req.Domain, supportsSingle, supportsWildcard)
@@ -314,8 +319,7 @@ func (h *DomainHandler) GetStatus(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
 		return
 	}
-	serverIP := h.getServerIP(c.Request.Context())
-	_, mxDetails, mxStatus := store.CheckDomainMXDetails(domain.Domain, serverIP)
+	_, mxDetails, mxStatus := store.CheckDomainMXDetails(domain.Domain, h.mxCheckIPs(c.Request.Context()))
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":                domain.ID,
@@ -338,11 +342,12 @@ func (h *DomainHandler) RefreshMX(c *gin.Context) {
 		return
 	}
 
-	serverIP := h.getServerIP(c.Request.Context())
+	serverIP := h.mxCheckIPs(c.Request.Context())
 	results := make([]gin.H, 0, len(domains))
 	for _, domain := range domains {
 		_, mxDetails, mxStatus := store.CheckDomainMXDetails(domain.Domain, serverIP)
-		supportsSingle, supportsWildcard := store.DomainCapabilitiesFromMX(mxDetails)
+		// 临时 DNS 故障时沿用原能力，避免手动刷新把域名误降级
+		supportsSingle, supportsWildcard := store.MergeCapabilities(domain.SupportsSingle, domain.SupportsWildcard, mxDetails)
 		if err := h.store.UpdateDomainCapabilities(c.Request.Context(), domain.ID, supportsSingle, supportsWildcard); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "domain": domain.Domain})
 			return

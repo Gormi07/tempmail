@@ -276,28 +276,42 @@ func main() {
 		log.Println("[OK] MX domain verifier started (pending check=30s, active re-check=6h)")
 		reCheckTicker := time.NewTicker(6 * time.Hour)
 		defer reCheckTicker.Stop()
+		// 已激活域名巡检：出现降级时短暂重试，只有连续 mxDemoteAttempts 次
+		// 确定性失败（NXDOMAIN / MX 指向别处）才降级；临时 DNS 故障沿用原能力。
+		const mxDemoteAttempts = 3
+		const mxDemoteRetryDelay = 20 * time.Second
 		refreshActiveDomains := func() {
 			activeDomains, err := db.GetActiveDomains(context.Background())
 			if err != nil {
 				log.Printf("[mx-recheck] list active error: %v", err)
 				return
 			}
-			serverIP := cfg.SMTPServerIP
-			if serverIP == "" {
-				serverIP, _ = db.GetSetting(context.Background(), "smtp_server_ip")
-			}
-			log.Printf("[mx-recheck] checking %d active domains", len(activeDomains))
+			serverIPs := db.MXCheckServerIPs(context.Background(), cfg.SMTPServerIP)
+			log.Printf("[mx-recheck] checking %d active domains (server ips: %s)", len(activeDomains), serverIPs)
 			for _, d := range activeDomains {
-				matched, details, mxStatus := store.CheckDomainMXDetails(d.Domain, serverIP)
-				supportsSingle, supportsWildcard := store.DomainCapabilitiesFromMX(details)
+				var supportsSingle, supportsWildcard bool
+				var mxStatus string
+				for attempt := 1; attempt <= mxDemoteAttempts; attempt++ {
+					var details []store.MXCheckDetail
+					_, details, mxStatus = store.CheckDomainMXDetails(d.Domain, serverIPs)
+					supportsSingle, supportsWildcard = store.MergeCapabilities(d.SupportsSingle, d.SupportsWildcard, details)
+					downgraded := (d.SupportsSingle && !supportsSingle) || (d.SupportsWildcard && !supportsWildcard)
+					if !downgraded {
+						break
+					}
+					if attempt < mxDemoteAttempts {
+						log.Printf("[mx-recheck] %s check failed (attempt %d/%d): %s; retrying", d.Domain, attempt, mxDemoteAttempts, mxStatus)
+						time.Sleep(mxDemoteRetryDelay)
+					}
+				}
 				if err := db.UpdateDomainCapabilities(context.Background(), d.ID, supportsSingle, supportsWildcard); err != nil {
 					log.Printf("[mx-recheck] update %s capabilities error: %v", d.Domain, err)
 					continue
 				}
-				if !matched {
-					log.Printf("[mx-recheck] [WARN] %s MX no longer valid (%s), domain disabled", d.Domain, mxStatus)
+				if !supportsSingle && !supportsWildcard {
+					log.Printf("[mx-recheck] [WARN] %s MX no longer valid (%s), moved to pending", d.Domain, mxStatus)
 				} else {
-					log.Printf("[mx-recheck] %s capabilities refreshed, single=%v wildcard=%v", d.Domain, supportsSingle, supportsWildcard)
+					log.Printf("[mx-recheck] %s capabilities refreshed, single=%v wildcard=%v (%s)", d.Domain, supportsSingle, supportsWildcard, mxStatus)
 				}
 			}
 		}
@@ -305,7 +319,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				// 处理待验证域名
+				// 处理待验证域名（与添加/注册路径使用完全相同的 IP 与校验逻辑）
 				pendingDomains, err := db.ListPendingDomains(context.Background())
 				if err != nil {
 					log.Printf("[mx-verifier] list pending error: %v", err)
@@ -314,12 +328,9 @@ func main() {
 				if len(pendingDomains) == 0 {
 					continue
 				}
-				serverIP := cfg.SMTPServerIP
-				if serverIP == "" {
-					serverIP, _ = db.GetSetting(context.Background(), "smtp_server_ip")
-				}
+				serverIPs := db.MXCheckServerIPs(context.Background(), cfg.SMTPServerIP)
 				for _, d := range pendingDomains {
-					matched, details, mxStatus := store.CheckDomainMXDetails(d.Domain, serverIP)
+					matched, details, mxStatus := store.CheckDomainMXDetails(d.Domain, serverIPs)
 					supportsSingle, supportsWildcard := store.DomainCapabilitiesFromMX(details)
 					if err := db.UpdateDomainCapabilities(context.Background(), d.ID, supportsSingle, supportsWildcard); err != nil {
 						log.Printf("[mx-verifier] update %s capabilities error: %v", d.Domain, err)
@@ -328,7 +339,7 @@ func main() {
 					if matched {
 						log.Printf("[mx-verifier] [OK] %s MX verified, single=%v wildcard=%v", d.Domain, supportsSingle, supportsWildcard)
 					} else {
-						log.Printf("[mx-verifier] waiting: %s — %s", d.Domain, mxStatus)
+						log.Printf("[mx-verifier] waiting: %s — %s (server ips: %s)", d.Domain, mxStatus, serverIPs)
 					}
 				}
 

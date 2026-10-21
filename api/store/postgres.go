@@ -706,6 +706,9 @@ type MXCheckDetail struct {
 	Matched bool     `json:"matched"`
 	MXHosts []string `json:"mx_hosts"`
 	Status  string   `json:"status"`
+	// Transient 为 true 表示本次检测遇到临时 DNS 故障（超时/SERVFAIL/未配置 IP），
+	// 结果不可信，调用方不应据此降级域名。
+	Transient bool `json:"transient,omitempty"`
 }
 
 // CheckDomainMX 检测域名MX记录是否指向指定服务器IP。
@@ -762,31 +765,49 @@ func DomainCapabilitiesFromMX(details []MXCheckDetail) (supportsSingle, supports
 
 func checkMXName(kind, lookupName, serverIP string) MXCheckDetail {
 	detail := MXCheckDetail{Kind: kind, Name: lookupName}
+	serverIPs := parseServerIPs(serverIP)
+	if len(serverIPs) == 0 {
+		detail.Status = "未配置服务器IP（SMTP_SERVER_IP / 系统设置 smtp_server_ip）"
+		detail.Transient = true
+		return detail
+	}
 	mxRecords, err := net.LookupMX(lookupName)
 	if err != nil {
 		detail.Status = fmt.Sprintf("DNS查询失败: %v", err)
+		detail.Transient = !isDefinitiveDNSMiss(err)
 		return detail
 	}
 	if len(mxRecords) == 0 {
 		detail.Status = "未找到MX记录"
 		return detail
 	}
+	hostLookupTransient := false
 	for _, mx := range mxRecords {
 		host := strings.TrimSuffix(mx.Host, ".")
 		detail.MXHosts = append(detail.MXHosts, host)
 		addrs, err := net.LookupHost(host)
 		if err != nil {
+			if !isDefinitiveDNSMiss(err) {
+				hostLookupTransient = true
+			}
 			continue
 		}
 		for _, addr := range addrs {
-			if addr == serverIP {
+			if ip := net.ParseIP(addr); ip != nil {
+				addr = ip.String()
+			}
+			if serverIPs[addr] {
 				detail.Matched = true
 				detail.Status = fmt.Sprintf("MX记录匹配：%s → %s", host, addr)
 				return detail
 			}
 		}
 	}
+	detail.Transient = hostLookupTransient
 	detail.Status = fmt.Sprintf("MX记录(%s)未指向本服务器(%s)", strings.Join(detail.MXHosts, ","), serverIP)
+	if hostLookupTransient {
+		detail.Status += "（MX主机解析临时失败）"
+	}
 	return detail
 }
 

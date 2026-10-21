@@ -132,7 +132,10 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "${API_HOST_PORT:-8080}:8080"
+      # 仅绑定本机回环：frontend(nginx) 通过 docker 内网 api:8080 访问，
+      # postfix 通过 http://api:8080 投递；/internal/* 无鉴权，不能暴露到公网。
+      # 如确需公网访问 API，请改回 "${API_HOST_PORT:-8080}:8080" 并用防火墙限制来源。
+      - "${API_BIND_ADDR:-127.0.0.1}:${API_HOST_PORT:-8080}:8080"
     volumes:
       - ./data:/data
     environment:
