@@ -102,11 +102,7 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function formatDate(s) {
-  if (!s) return '—';
-  const d = new Date(s);
-  return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-}
+// formatDate 定义于 js/datefmt.js（固定 Asia/Shanghai 时区）
 
 function timeAgo(s) {
   if (!s) return '—';
@@ -468,8 +464,8 @@ function renderLoginForm() {
     ` : ''}
     ${!showKeyLogin && !oauthLogin ? `<div style="text-align:center;color:var(--text-muted);line-height:1.8">当前没有启用任何登录方式，请联系管理员。</div>` : ''}
     <div class="divider"></div>
-    <div style="text-align:center;font-size:0.78rem;color:var(--text-muted)">
-      没有Api Key，<a href="https://shop.kejimiaozai.com/products/linshi" target="_blank" rel="noopener noreferrer">点击购买</a>，0.2元/天
+    <div class="buy-notice">
+      没有Api Key，<a href="https://shop.kejimiaozai.com/products/linshi" target="_blank" rel="noopener noreferrer">点击购买</a>，<span class="buy-price">0.2元/天</span>
     </div>
   `;
   const inp = $('login-key');
@@ -1360,7 +1356,7 @@ function showGeneratedKeys(list) {
       <button class="btn btn-secondary btn-sm" onclick="exportGeneratedKeys('txt')">导出 TXT</button>
       <button class="btn btn-secondary btn-sm" onclick="exportGeneratedKeys('csv')">导出 CSV</button>
     </div>
-  `, async () => true);
+  `, async () => true, { confirmText: '完成', hideCancel: true });
 }
 window.copyGeneratedKeys = () => copyText(lastGeneratedKeys.map(a => a.api_key).join('\n'));
 window.exportGeneratedKeys = function(fmt) {
@@ -1891,7 +1887,7 @@ window.saveLoginSetting = async function(key, enabled, label) {
 };
 
 // ─── Modal ────────────────────────────────────────────────
-function showModal(title, bodyHtml, onConfirm) {
+function showModal(title, bodyHtml, onConfirm, opts = {}) {
   const old = document.querySelector('.modal-overlay');
   if (old) old.remove();
 
@@ -1902,8 +1898,8 @@ function showModal(title, bodyHtml, onConfirm) {
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x')}</button>
       ${bodyHtml}
       <div class="modal-actions">
-        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">取消</button>
-        <button class="btn btn-primary" id="modal-confirm-btn">确认</button>
+        ${opts.hideCancel ? '' : `<button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">${escHtml(opts.cancelText || '取消')}</button>`}
+        <button class="btn btn-primary" id="modal-confirm-btn">${escHtml(opts.confirmText || '确认')}</button>
       </div>
     </div>
   `;

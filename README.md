@@ -279,6 +279,12 @@ X-RateLimit-Reset: 1735000000
 
 ---
 
+## 前端测试
+
+```bash
+node --test frontend/tests/
+```
+
 ## 数据库迁移
 
 | 文件 | 用途 |
