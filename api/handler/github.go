@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,17 +43,17 @@ func NewGitHubHandler(s *store.Store, clientID, clientSecret, redirectURL string
 
 func (h *GitHubHandler) Start(c *gin.Context) {
 	if !h.loginEnabled(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub login is disabled"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub 登录已关闭"})
 		return
 	}
 	cfg := h.oauthConfig(c)
 	if cfg.clientID == "" || cfg.clientSecret == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub OAuth config is incomplete"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub 登录配置不完整，请联系管理员"})
 		return
 	}
 	state, err := randomState()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create oauth state"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法发起登录，请稍后再试"})
 		return
 	}
 	c.SetSameSite(http.SameSiteLaxMode)
@@ -70,52 +71,53 @@ func (h *GitHubHandler) Start(c *gin.Context) {
 
 func (h *GitHubHandler) Callback(c *gin.Context) {
 	if !h.loginEnabled(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub login is disabled"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub 登录已关闭"})
 		return
 	}
 	cfg := h.oauthConfig(c)
 	if cfg.clientID == "" || cfg.clientSecret == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub OAuth config is incomplete"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "GitHub 登录配置不完整，请联系管理员"})
 		return
 	}
 	state := c.Query("state")
 	cookieState, err := c.Cookie(gitHubStateCookie)
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(cookieState)) != 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid oauth state"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "登录状态已失效，请重新发起登录"})
 		return
 	}
 	c.SetCookie(gitHubStateCookie, "", -1, "/", "", false, true)
 
 	if oauthErr := c.Query("error"); oauthErr != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub OAuth error: " + oauthErr})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub 授权失败或已取消，请重试"})
+		log.Printf("[oauth] github callback error: %s", oauthErr)
 		return
 	}
 	code := c.Query("code")
 	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing oauth code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "授权码缺失，请重新发起登录"})
 		return
 	}
 
 	token, err := h.exchangeCode(code, cfg)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadGateway, "GitHub 登录失败，请稍后再试", err)
 		return
 	}
 	profile, err := h.fetchUserInfo(token)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadGateway, "获取 GitHub 账号信息失败，请稍后再试", err)
 		return
 	}
 	gitHubID := profile.IDString()
 	if gitHubID == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub profile missing id"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未能获取 GitHub 账号信息，请重试"})
 		return
 	}
 
 	username := gitHubUsername(profile)
 	account, err := h.store.GetOrCreateGitHubAccount(c.Request.Context(), gitHubID, username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 

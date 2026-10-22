@@ -60,7 +60,7 @@ func ComputeExpiry(now time.Time, amount int, unit string) (*time.Time, error) {
 	case "month", "months", "m":
 		t = AddMonthsClamped(now, amount)
 	default:
-		return nil, fmt.Errorf("invalid validity unit %q: use day or month", unit)
+		return nil, fmt.Errorf("有效期单位只能是天（day）或月（month），收到 %q", unit)
 	}
 	return &t, nil
 }

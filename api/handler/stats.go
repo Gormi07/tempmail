@@ -21,7 +21,7 @@ func NewStatsHandler(s *store.Store) *StatsHandler {
 func (h *StatsHandler) Get(c *gin.Context) {
 	stats, err := h.store.GetStats(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 	c.JSON(http.StatusOK, stats)

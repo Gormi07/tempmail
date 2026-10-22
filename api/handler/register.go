@@ -21,7 +21,7 @@ func (h *RegisterHandler) Register(c *gin.Context) {
 	// 检查注册开关
 	regOpen, err := h.store.GetSetting(c.Request.Context(), "registration_open")
 	if err != nil || regOpen != "true" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "registration is currently closed"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "当前暂不开放注册"})
 		return
 	}
 
@@ -29,13 +29,13 @@ func (h *RegisterHandler) Register(c *gin.Context) {
 		Username string `json:"username" binding:"required,min=2,max=64"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "用户名需为 2-64 个字符", err)
 		return
 	}
 
 	account, err := h.store.CreateAccount(c.Request.Context(), req.Username)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})
+		c.JSON(http.StatusConflict, gin.H{"error": "用户名已被占用，请换一个"})
 		return
 	}
 
@@ -43,6 +43,6 @@ func (h *RegisterHandler) Register(c *gin.Context) {
 		"id":       account.ID,
 		"username": account.Username,
 		"api_key":  account.APIKey,
-		"message":  "registration successful — save your API key, it won't be shown again",
+		"message":  "注册成功，请妥善保存 API Key，它只会显示这一次",
 	})
 }
