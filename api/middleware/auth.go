@@ -39,7 +39,7 @@ func Auth(s AccountLookup) gin.HandlerFunc {
 
 		if apiKey == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "missing api_key: use Authorization, X-API-Key, or ?api_key= query param",
+				"error": "缺少 API Key，请先登录",
 			})
 			return
 		}
@@ -77,7 +77,7 @@ func AdminOnly() gin.HandlerFunc {
 		account := GetAccount(c)
 		if account == nil || !account.IsAdmin {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "admin access required",
+				"error": "需要管理员权限",
 			})
 			return
 		}

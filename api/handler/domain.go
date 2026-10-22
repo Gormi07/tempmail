@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,13 +88,14 @@ func (h *DomainHandler) Add(c *gin.Context) {
 		Domain string `json:"domain" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 
 	domain, err := h.store.AddDomain(c.Request.Context(), req.Domain)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "domain already exists: " + err.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "域名已存在或添加失败"})
+		log.Printf("[api] add domain: %v", err)
 		return
 	}
 
@@ -118,7 +120,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 
 	domains, err := h.store.ListDomains(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
@@ -129,7 +131,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 func (h *DomainHandler) Delete(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid domain id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "域名 ID 无效"})
 		return
 	}
 
@@ -142,18 +144,18 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "domain deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "域名已删除"})
 }
 
 // PUT /api/admin/domains/:id/toggle - 启用/禁用域名（管理员）
 func (h *DomainHandler) Toggle(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid domain id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "域名 ID 无效"})
 		return
 	}
 
@@ -161,16 +163,16 @@ func (h *DomainHandler) Toggle(c *gin.Context) {
 		Active bool `json:"active"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 
 	if err := h.store.ToggleDomain(c.Request.Context(), id, req.Active); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "domain updated"})
+	c.JSON(http.StatusOK, gin.H{"message": "域名已更新"})
 }
 
 // POST /api/admin/domains/mx-import - MX快捷接入（DNS检测并自动导入）
@@ -181,7 +183,7 @@ func (h *DomainHandler) MXImport(c *gin.Context) {
 		Force  bool   `json:"force"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
@@ -214,7 +216,7 @@ func (h *DomainHandler) MXImport(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "域名已存在"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
@@ -235,7 +237,7 @@ func (h *DomainHandler) MXRegister(c *gin.Context) {
 		Domain string `json:"domain" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
@@ -268,7 +270,7 @@ func (h *DomainHandler) MXRegister(c *gin.Context) {
 					}
 				}
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, MsgInternal, err)
 			return
 		}
 		c.JSON(http.StatusCreated, gin.H{
@@ -285,7 +287,7 @@ func (h *DomainHandler) MXRegister(c *gin.Context) {
 	// MX未通过 → 加入 pending，等待后台自动轮询
 	domain, err := h.store.AddDomainPending(c.Request.Context(), req.Domain)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
@@ -310,13 +312,13 @@ func (h *DomainHandler) Submit(c *gin.Context) {
 func (h *DomainHandler) GetStatus(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid domain id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "域名 ID 无效"})
 		return
 	}
 
 	domain, err := h.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "域名不存在"})
 		return
 	}
 	_, mxDetails, mxStatus := store.CheckDomainMXDetails(domain.Domain, h.mxCheckIPs(c.Request.Context()))
@@ -338,7 +340,7 @@ func (h *DomainHandler) GetStatus(c *gin.Context) {
 func (h *DomainHandler) RefreshMX(c *gin.Context) {
 	domains, err := h.store.ListDomains(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
@@ -349,7 +351,8 @@ func (h *DomainHandler) RefreshMX(c *gin.Context) {
 		// 临时 DNS 故障时沿用原能力，避免手动刷新把域名误降级
 		supportsSingle, supportsWildcard := store.MergeCapabilities(domain.SupportsSingle, domain.SupportsWildcard, mxDetails)
 		if err := h.store.UpdateDomainCapabilities(c.Request.Context(), domain.ID, supportsSingle, supportsWildcard); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "domain": domain.Domain})
+			log.Printf("[api] domain %s: %v", domain.Domain, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": MsgInternal, "domain": domain.Domain})
 			return
 		}
 		results = append(results, gin.H{

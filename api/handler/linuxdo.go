@@ -45,17 +45,17 @@ func NewLinuxDOHandler(s *store.Store, clientID, clientSecret, redirectURL strin
 
 func (h *LinuxDOHandler) Start(c *gin.Context) {
 	if !h.loginEnabled(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO login is disabled"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO 登录已关闭"})
 		return
 	}
 	cfg := h.oauthConfig(c)
 	if cfg.clientID == "" || cfg.clientSecret == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO OAuth config is incomplete"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO 登录配置不完整，请联系管理员"})
 		return
 	}
 	state, err := randomState()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create oauth state"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法发起登录，请稍后再试"})
 		return
 	}
 	c.SetSameSite(http.SameSiteLaxMode)
@@ -72,48 +72,48 @@ func (h *LinuxDOHandler) Start(c *gin.Context) {
 
 func (h *LinuxDOHandler) Callback(c *gin.Context) {
 	if !h.loginEnabled(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO login is disabled"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO 登录已关闭"})
 		return
 	}
 	cfg := h.oauthConfig(c)
 	if cfg.clientID == "" || cfg.clientSecret == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO OAuth config is incomplete"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Linux DO 登录配置不完整，请联系管理员"})
 		return
 	}
 	state := c.Query("state")
 	cookieState, err := c.Cookie(linuxDOStateCookie)
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(cookieState)) != 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid oauth state"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "登录状态已失效，请重新发起登录"})
 		return
 	}
 	c.SetCookie(linuxDOStateCookie, "", -1, "/", "", false, true)
 
 	code := c.Query("code")
 	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing oauth code"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "授权码缺失，请重新发起登录"})
 		return
 	}
 
 	token, err := h.exchangeCode(code, cfg)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadGateway, "Linux DO 登录失败，请稍后再试", err)
 		return
 	}
 	profile, err := h.fetchUserInfo(token)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadGateway, "获取 Linux DO 账号信息失败，请稍后再试", err)
 		return
 	}
 	linuxDOID := profile.IDString()
 	if linuxDOID == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Linux DO profile missing id"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未能获取 Linux DO 账号信息，请重试"})
 		return
 	}
 
 	username := linuxDOUsername(profile)
 	account, err := h.store.GetOrCreateLinuxDOAccount(c.Request.Context(), linuxDOID, username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 

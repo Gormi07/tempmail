@@ -55,7 +55,7 @@ func RateLimit(rdb *redis.Client, limit int, window int) gin.HandlerFunc {
 
 		if count > int64(limit) {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error":       "rate limit exceeded",
+				"error":       "请求过于频繁，请稍后再试",
 				"limit":       limit,
 				"retry_after": window,
 			})

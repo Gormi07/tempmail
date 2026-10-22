@@ -64,7 +64,7 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 		}
 	}
 	if mode != "single" && mode != "multi" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode, expected single or multi"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "邮箱模式无效，只能是单域名（single）或多级域名（multi）"})
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 	if req.DomainID > 0 {
 		found, err := h.store.GetDomainByID(c.Request.Context(), req.DomainID)
 		if err != nil || !found.IsActive {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "domain not found or not active"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "域名不存在或未启用"})
 			return
 		}
 		if req.Mode == "" {
@@ -83,18 +83,18 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 			}
 		}
 		if mode == "single" && !found.SupportsSingle {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "single mode requires a domain with single-domain MX support"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该域名不支持单域名邮箱，请换一个域名"})
 			return
 		}
 		if mode == "multi" && !found.SupportsWildcard {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "multi mode requires a domain with wildcard MX support"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该域名不支持多级子域名邮箱，请换一个域名"})
 			return
 		}
 		domainRecord = found
 	} else if d := strings.TrimSpace(strings.ToLower(req.Domain)); d != "" {
 		found, err := h.store.GetDomainByName(c.Request.Context(), d)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "domain not found or not active: " + d})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "域名不存在或未启用：" + d})
 			return
 		}
 		if req.Mode == "" {
@@ -104,11 +104,11 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 			}
 		}
 		if mode == "single" && !found.SupportsSingle {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "single mode requires a domain with single-domain MX support"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该域名不支持单域名邮箱，请换一个域名"})
 			return
 		}
 		if mode == "multi" && !found.SupportsWildcard {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "multi mode requires a domain with wildcard MX support"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该域名不支持多级子域名邮箱，请换一个域名"})
 			return
 		}
 		domainRecord = found
@@ -134,7 +134,7 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 			}
 		}
 		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("no active %s domains available", capability)})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": noActiveDomainMsg(capability)})
 			return
 		}
 		domainRecord = found
@@ -145,7 +145,7 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 		if customSubdomain != "" {
 			customDomain, err := store.JoinCustomSubdomain(customSubdomain, domainRecord.BaseDomain)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				respondError(c, http.StatusBadRequest, "自定义子域名格式不正确，只能包含字母、数字和连字符", err)
 				return
 			}
 			domainName = customDomain
@@ -158,10 +158,10 @@ func (h *MailboxHandler) Create(c *gin.Context) {
 	mailbox, err := h.store.CreateMailbox(c.Request.Context(), account.ID, address, domainRecord.ID, fullAddress, ttlMinutes)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
-			c.JSON(http.StatusConflict, gin.H{"error": "address already taken, try again"})
+			c.JSON(http.StatusConflict, gin.H{"error": "该邮箱名已被占用，请换一个"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "创建邮箱失败，请稍后再试", err)
 		return
 	}
 
@@ -182,7 +182,7 @@ func (h *MailboxHandler) List(c *gin.Context) {
 
 	mailboxes, total, err := h.store.ListMailboxes(c.Request.Context(), account.ID, page, size)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, "获取邮箱列表失败，请稍后再试", err)
 		return
 	}
 
@@ -199,14 +199,21 @@ func (h *MailboxHandler) Delete(c *gin.Context) {
 	account := middleware.GetAccount(c)
 	id, err := parseUUID(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mailbox id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "邮箱 ID 无效"})
 		return
 	}
 
 	if err := h.store.DeleteMailbox(c.Request.Context(), id, account.ID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "mailbox not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "邮箱不存在或已过期"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "mailbox deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "邮箱已删除"})
+}
+
+func noActiveDomainMsg(capability string) string {
+	if capability == store.DomainCapabilityWildcard {
+		return "暂无可用的多级子域名，请稍后再试"
+	}
+	return "暂无可用的域名，请稍后再试"
 }

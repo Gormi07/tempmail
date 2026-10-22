@@ -140,6 +140,12 @@ async function copyText(text) {
 }
 
 // ─── API 客户端 ─────────────────────────────────────────────
+// 服务端返回的错误信息原样展示；网络异常等无服务端信息时使用兜底文案。
+function errMsg(e, fallback) {
+  if (e && e.status && e.message) return e.message;
+  return fallback + '，请检查网络后重试';
+}
+
 async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (state.apiKey) headers['Authorization'] = `Bearer ${state.apiKey}`;
@@ -147,7 +153,7 @@ async function apiFetch(path, opts = {}) {
   let data;
   try { data = await res.json(); } catch { data = {}; }
   if (!res.ok) {
-    const errMsg = data.error || data.message || `HTTP ${res.status}`;
+    const errMsg = data.error || data.message || `请求失败（HTTP ${res.status}）`;
     const err = new Error(errMsg);
     err.status = res.status;
     err.data = data;
@@ -312,7 +318,7 @@ async function tryLogin(key) {
     toast(`欢迎回来，${acct.username || '用户'}`, 'success');
   } catch (e) {
     state.apiKey = '';
-    toast(e.message, 'error');
+    toast(errMsg(e, '登录失败'), 'error');
   }
 }
 
@@ -523,7 +529,7 @@ window.doRegister = async function() {
       </div>
     `;
   } catch(e) {
-    toast('注册失败: ' + e.message, 'error');
+    toast(errMsg(e, '注册失败'), 'error');
   }
 };
 
@@ -676,7 +682,7 @@ async function renderPage(page) {
       default: container.innerHTML = '<div class="page"><p>页面未找到</p></div>';
     }
   } catch(e) {
-    container.innerHTML = `<div style="padding:2rem;color:var(--clr-danger)">加载失败：${escHtml(e.message)}</div>`;
+    container.innerHTML = `<div style="padding:2rem;color:var(--clr-danger)">${escHtml(errMsg(e, '加载失败'))}</div>`;
   }
 }
 
@@ -918,7 +924,7 @@ window.createMailbox = async function() {
     } catch(e) {
       btn.disabled = false;
       btn.textContent = '创建';
-      toast('创建失败：' + e.message, 'error');
+      toast(errMsg(e, '创建失败'), 'error');
     }
   });
 };
@@ -930,7 +936,7 @@ window.confirmDeleteMailbox = function(id, addr) {
         await api.deleteMailbox(id);
         toast('邮箱已删除', 'success');
         navigate('dashboard');
-      } catch(e) { toast('删除失败: ' + e.message, 'error'); }
+      } catch(e) { toast(errMsg(e, '删除失败'), 'error'); }
     }
   );
 };
@@ -1051,7 +1057,7 @@ window.deleteEmail = async function(mbId, eid) {
     await api.deleteEmail(mbId, eid);
     toast('邮件已删除', 'success');
     navigate('inbox');
-  } catch(e) { toast('删除失败: ' + e.message, 'error'); }
+  } catch(e) { toast(errMsg(e, '删除失败'), 'error'); }
 };
 
 // ─── Email View ────────────────────────────────────────────
@@ -1341,7 +1347,7 @@ window.showCreateAccountModal = function() {
       toast(`已生成 ${list.length} 个 API Key`, 'success');
       navigate('admin-accounts');
       setTimeout(() => showGeneratedKeys(list), 0);
-    } catch(e) { toast('创建失败: ' + e.message, 'error'); return false; }
+    } catch(e) { toast(errMsg(e, '创建失败'), 'error'); return false; }
   });
 };
 
@@ -1384,7 +1390,7 @@ window.confirmDeleteAccount = function(id, name) {
       await api.admin.deleteAccount(id);
       toast('账户已删除', 'success');
       navigate('admin-accounts');
-    } catch(e) { toast('删除失败: ' + e.message, 'error'); }
+    } catch(e) { toast(errMsg(e, '删除失败'), 'error'); }
   });
 };
 
@@ -1579,7 +1585,7 @@ window.showAddDomainModal = function() {
       }
     } catch(e) {
       if (checkBtn) { checkBtn.disabled = false; checkBtn.innerHTML = iconButton('search', '检测 MX'); }
-      toast('操作失败: ' + e.message, 'error');
+      toast(errMsg(e, '操作失败'), 'error');
     }
   };
 };
@@ -1620,7 +1626,7 @@ window.toggleDomain = async function(id, newActive) {
     await api.admin.toggleDomain(id, newActive);
     toast('状态已切换', 'success');
     navigate('admin-domains');
-  } catch(e) { toast('操作失败: ' + e.message, 'error'); }
+  } catch(e) { toast(errMsg(e, '操作失败'), 'error'); }
 };
 
 window.refreshDomainMX = async function() {
@@ -1628,7 +1634,7 @@ window.refreshDomainMX = async function() {
     await api.admin.refreshDomainMX();
     toast('MX 能力已刷新', 'success');
     navigate('admin-domains');
-  } catch(e) { toast('刷新失败: ' + e.message, 'error'); }
+  } catch(e) { toast(errMsg(e, '刷新失败'), 'error'); }
 };
 
 window.confirmDeleteDomain = function(id, name) {
@@ -1637,7 +1643,7 @@ window.confirmDeleteDomain = function(id, name) {
       await api.admin.deleteDomain(id);
       toast('域名已删除', 'success');
       navigate('admin-domains');
-    } catch(e) { toast('删除失败: ' + e.message, 'error'); }
+    } catch(e) { toast(errMsg(e, '删除失败'), 'error'); }
   });
 };
 
@@ -1853,7 +1859,7 @@ window.saveSetting = async function(inputId, settingKey) {
   try {
     await api.admin.saveSettings({ [settingKey]: val });
     toast('已保存', 'success');
-  } catch(e) { toast('保存失败: ' + e.message, 'error'); }
+  } catch(e) { toast(errMsg(e, '保存失败'), 'error'); }
 };
 
 // 兼容旧调用
@@ -1864,7 +1870,7 @@ window.saveRegistrationSetting = async function(enabled) {
     await api.admin.saveSettings({ registration_open: enabled ? 'true' : 'false' });
     toast(`注册已${enabled ? '开启' : '关闭'}`, 'success');
   } catch(e) {
-    toast('保存失败: ' + e.message, 'error');
+    toast(errMsg(e, '保存失败'), 'error');
     const cb = $('toggle-reg');
     if (cb) cb.checked = !enabled;
   }
@@ -1875,7 +1881,7 @@ window.saveLoginSetting = async function(key, enabled, label) {
     await api.admin.saveSettings({ [key]: enabled ? 'true' : 'false' });
     toast(`${label}已${enabled ? '开启' : '关闭'}`, 'success');
   } catch(e) {
-    toast('保存失败: ' + e.message, 'error');
+    toast(errMsg(e, '保存失败'), 'error');
     const cbMap = {
       key_login_enabled: 'toggle-key-login',
       linuxdo_login_enabled: 'toggle-linuxdo-login',

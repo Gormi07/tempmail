@@ -56,7 +56,7 @@ func (h *SettingHandler) GetPublic(c *gin.Context) {
 func (h *SettingHandler) AdminGetAll(c *gin.Context) {
 	settings, err := h.store.GetAllSettings(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 	if secret := settings["linuxdo_client_secret"]; secret != "" {
@@ -78,7 +78,7 @@ func (h *SettingHandler) AdminGetAll(c *gin.Context) {
 func (h *SettingHandler) AdminUpdate(c *gin.Context) {
 	var req map[string]string
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 
@@ -107,16 +107,16 @@ func (h *SettingHandler) AdminUpdate(c *gin.Context) {
 
 	for k, v := range req {
 		if !allowed[k] {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown setting key: " + k})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "未知的配置项：" + k})
 			return
 		}
 		if (k == "linuxdo_client_secret" || k == "github_client_secret") && v == "" {
 			continue
 		}
 		if err := h.store.SetSetting(c.Request.Context(), k, v); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, MsgInternal, err)
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "settings updated"})
+	c.JSON(http.StatusOK, gin.H{"message": "设置已保存"})
 }

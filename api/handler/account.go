@@ -31,7 +31,7 @@ func (h *AccountHandler) KeyLogin(c *gin.Context) {
 		APIKey string `json:"api_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 
@@ -41,7 +41,7 @@ func (h *AccountHandler) KeyLogin(c *gin.Context) {
 		return
 	}
 	if keyLogin == "false" && !account.IsAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "API Key login is disabled"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "API Key 登录已关闭"})
 		return
 	}
 
@@ -76,19 +76,19 @@ func (r *CreateAccountsReq) Normalize() error {
 		r.Count = 1
 	}
 	if r.Count < 1 || r.Count > MaxBatchCreate {
-		return fmt.Errorf("count must be between 1 and %d", MaxBatchCreate)
+		return fmt.Errorf("生成数量需在 1 到 %d 之间", MaxBatchCreate)
 	}
 	if r.Username != "" && (len(r.Username) < 2 || len(r.Username) > 48) {
-		return errors.New("username must be 2-48 characters")
+		return errors.New("用户名需为 2-48 个字符")
 	}
 	if r.Validity < 0 || r.Validity > 3650 {
-		return errors.New("validity must be between 0 and 3650")
+		return errors.New("有效期需在 0 到 3650 之间")
 	}
 	if r.ValidityUnit == "" {
 		r.ValidityUnit = "day"
 	}
 	if r.ValidityUnit != "day" && r.ValidityUnit != "month" {
-		return errors.New("validity_unit must be day or month")
+		return errors.New("有效期单位只能是天（day）或月（month）")
 	}
 	return nil
 }
@@ -97,22 +97,26 @@ func (r *CreateAccountsReq) Normalize() error {
 func (h *AccountHandler) Create(c *gin.Context) {
 	var req CreateAccountsReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
 		return
 	}
 	if err := req.Normalize(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // 自定义中文校验信息
 		return
 	}
 	expiresAt, err := model.ComputeExpiry(time.Now(), req.Validity, req.ValidityUnit)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // 自定义中文校验信息
 		return
 	}
 
 	accounts, err := h.store.CreateAccountsBatch(c.Request.Context(), req.Username, req.Count, expiresAt)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "username already exists or db error: " + err.Error()})
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			respondError(c, http.StatusConflict, "用户名已被占用，请换一个", err)
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "创建账户失败，请稍后再试", err)
 		return
 	}
 
@@ -145,7 +149,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 
 	accounts, total, err := h.store.ListAccounts(c.Request.Context(), page, size)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
@@ -161,16 +165,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 func (h *AccountHandler) Delete(c *gin.Context) {
 	id, err := parseUUID(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "账户 ID 无效"})
 		return
 	}
 
 	if err := h.store.DeleteAccount(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "账户已删除"})
 }
 
 // GET /api/me - 查看当前账号信息
