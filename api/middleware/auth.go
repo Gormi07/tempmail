@@ -1,19 +1,28 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"tempmail/model"
-	"tempmail/store"
 
 	"github.com/gin-gonic/gin"
 )
 
 const AccountKey = "account"
 
-// Auth API Key 认证中间件
-func Auth(s *store.Store) gin.HandlerFunc {
+// AccountLookup 是认证所需的最小存储接口（*store.Store 已实现）。
+type AccountLookup interface {
+	GetAccountByAPIKey(ctx context.Context, apiKey string) (*model.Account, error)
+}
+
+// now 便于测试替换。
+var now = time.Now
+
+// Auth API Key 认证中间件。过期的 Key（expires_at <= now）一律拒绝。
+func Auth(s AccountLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("Authorization")
 		if apiKey == "" {
@@ -38,6 +47,14 @@ func Auth(s *store.Store) gin.HandlerFunc {
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "invalid api_key",
+			})
+			return
+		}
+
+		// SQL 已过滤过期账户，这里再做一次校验作为兜底。
+		if account.IsExpired(now()) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "api_key expired",
 			})
 			return
 		}

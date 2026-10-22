@@ -294,12 +294,13 @@ X-RateLimit-Reset: 1735000000
 | `sql/migrate_v9.sql` | v8 → v9：GitHub OAuth 登录 |
 | `sql/migrate_v10.sql` | v9 → v10：分别跟踪单域名与通配子域名能力 |
 | `sql/migrate_v11.sql` | v10 → v11：邮箱累计收件数扩展为 BIGINT |
+| `sql/migrate_v12.sql` | v11 → v12：账户 API Key 有效期 `expires_at`（旧账户为 NULL，永久有效）|
 
-对已运行的库按版本顺序执行尚未应用的迁移。例如从 v10 升级：
+对已运行的库按版本顺序执行尚未应用的迁移。例如从 v11 升级：
 
 ```bash
 docker exec -i $(docker compose ps -q postgres) \
-  psql -U tempmail -d tempmail < sql/migrate_v11.sql
+  psql -U tempmail -d tempmail < sql/migrate_v12.sql
 ```
 
 ---

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,14 +10,37 @@ import (
 // ==================== 数据模型 ====================
 
 type Account struct {
-	ID        uuid.UUID `json:"id"`
-	Username  string    `json:"username"`
-	APIKey    string    `json:"api_key"`
-	LinuxDOID string    `json:"linuxdo_id,omitempty"`
-	IsAdmin   bool      `json:"is_admin"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID  `json:"id"`
+	Username  string     `json:"username"`
+	APIKey    string     `json:"api_key"`
+	LinuxDOID string     `json:"linuxdo_id,omitempty"`
+	IsAdmin   bool       `json:"is_admin"`
+	IsActive  bool       `json:"is_active"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at"` // nil = 永久有效
+}
+
+// IsExpired 判断账户 API Key 是否已过期；ExpiresAt 为 nil 视为永久有效。
+func (a *Account) IsExpired(now time.Time) bool {
+	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
+}
+
+// ComputeExpiry 根据有效期数值与单位（day/month）计算到期时间；amount<=0 表示永久（返回 nil）。
+func ComputeExpiry(now time.Time, amount int, unit string) (*time.Time, error) {
+	if amount <= 0 {
+		return nil, nil
+	}
+	var t time.Time
+	switch unit {
+	case "", "day", "days", "d":
+		t = now.AddDate(0, 0, amount)
+	case "month", "months", "m":
+		t = now.AddDate(0, amount, 0)
+	default:
+		return nil, fmt.Errorf("invalid validity unit %q: use day or month", unit)
+	}
+	return &t, nil
 }
 
 type AccountWithStats struct {

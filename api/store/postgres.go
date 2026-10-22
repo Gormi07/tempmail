@@ -161,9 +161,10 @@ func (s *Store) Close() {
 func (s *Store) GetAccountByAPIKey(ctx context.Context, apiKey string) (*model.Account, error) {
 	var a model.Account
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at
-		 FROM accounts WHERE api_key = $1 AND is_active = TRUE`, apiKey,
-	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at
+		 FROM accounts WHERE api_key = $1 AND is_active = TRUE
+		   AND (expires_at IS NULL OR expires_at > NOW())`, apiKey,
+	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -173,9 +174,9 @@ func (s *Store) GetAccountByAPIKey(ctx context.Context, apiKey string) (*model.A
 func (s *Store) GetOrCreateLinuxDOAccount(ctx context.Context, linuxDOID, username string) (*model.Account, error) {
 	var a model.Account
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at
+		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at
 		 FROM accounts WHERE linuxdo_id = $1 AND is_active = TRUE`, linuxDOID,
-	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 	if err == nil {
 		return &a, nil
 	}
@@ -191,9 +192,9 @@ func (s *Store) GetOrCreateLinuxDOAccount(ctx context.Context, linuxDOID, userna
 		}
 		err = s.pool.QueryRow(ctx,
 			`INSERT INTO accounts (username, api_key, linuxdo_id) VALUES ($1, $2, $3)
-			 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at`,
+			 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at`,
 			name, apiKey, linuxDOID,
-		).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+		).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 		if err == nil {
 			return &a, nil
 		}
@@ -204,9 +205,9 @@ func (s *Store) GetOrCreateLinuxDOAccount(ctx context.Context, linuxDOID, userna
 func (s *Store) GetOrCreateGitHubAccount(ctx context.Context, gitHubID, username string) (*model.Account, error) {
 	var a model.Account
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at
+		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at
 		 FROM accounts WHERE github_id = $1 AND is_active = TRUE`, gitHubID,
-	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 	if err == nil {
 		return &a, nil
 	}
@@ -222,9 +223,9 @@ func (s *Store) GetOrCreateGitHubAccount(ctx context.Context, gitHubID, username
 		}
 		err = s.pool.QueryRow(ctx,
 			`INSERT INTO accounts (username, api_key, github_id) VALUES ($1, $2, $3)
-			 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at`,
+			 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at`,
 			name, apiKey, gitHubID,
-		).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+		).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 		if err == nil {
 			return &a, nil
 		}
@@ -237,13 +238,51 @@ func (s *Store) CreateAccount(ctx context.Context, username string) (*model.Acco
 	var a model.Account
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO accounts (username, api_key) VALUES ($1, $2)
-		 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at`,
+		 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at`,
 		username, apiKey,
-	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
 	return &a, nil
+}
+
+// CreateAccountsBatch 在一个事务内批量创建 API Key 账户。expiresAt 为 nil 表示永久有效。
+// username 为空时自动生成 key_xxxxxxxx 形式的用户名；count>1 时以 prefix_xxxxxxxx 命名。
+func (s *Store) CreateAccountsBatch(ctx context.Context, prefix string, count int, expiresAt *time.Time) ([]model.Account, error) {
+	if count < 1 {
+		return nil, errors.New("count must be >= 1")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	out := make([]model.Account, 0, count)
+	for i := 0; i < count; i++ {
+		name := prefix
+		if name == "" {
+			name = "key"
+		}
+		if count > 1 || prefix == "" {
+			name = fmt.Sprintf("%s_%s", name, strings.TrimPrefix(generateAPIKey(), "tm_")[:8])
+		}
+		var a model.Account
+		err := tx.QueryRow(ctx,
+			`INSERT INTO accounts (username, api_key, expires_at) VALUES ($1, $2, $3)
+			 RETURNING id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at`,
+			name, generateAPIKey(), expiresAt,
+		).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) DeleteAccount(ctx context.Context, accountID uuid.UUID) error {
@@ -260,7 +299,7 @@ func (s *Store) ListAccounts(ctx context.Context, page, size int) ([]model.Accou
 
 	rows, err := s.pool.Query(ctx,
 		`SELECT
-			a.id, a.username, a.api_key, COALESCE(a.linuxdo_id, ''), a.is_admin, a.is_active, a.created_at, a.updated_at,
+			a.id, a.username, a.api_key, COALESCE(a.linuxdo_id, ''), a.is_admin, a.is_active, a.created_at, a.updated_at, a.expires_at,
 			(SELECT COUNT(*)::BIGINT FROM mailboxes m WHERE m.account_id = a.id) AS mailbox_count,
 			(SELECT COUNT(*)::BIGINT FROM mailboxes m WHERE m.account_id = a.id AND m.expires_at > NOW()) AS active_mailbox_count,
 			(SELECT COUNT(*)::BIGINT

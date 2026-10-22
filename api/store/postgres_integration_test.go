@@ -448,3 +448,38 @@ func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	os.Exit(m.Run())
 }
+
+func TestIntegrationAccountExpiryAndBatch(t *testing.T) {
+	s := openIntegrationStore(t)
+	ctx := context.Background()
+	future := time.Now().Add(24 * time.Hour)
+	past := time.Now().Add(-time.Hour)
+
+	accs, err := s.CreateAccountsBatch(ctx, "it_batch_"+uuid.NewString()[:6], 5, &future)
+	if err != nil || len(accs) != 5 {
+		t.Fatalf("batch create: %v (%d)", err, len(accs))
+	}
+	for _, a := range accs {
+		t.Cleanup(func() { _ = s.DeleteAccount(ctx, a.ID) })
+		got, err := s.GetAccountByAPIKey(ctx, a.APIKey)
+		if err != nil || got.ExpiresAt == nil {
+			t.Fatalf("lookup valid key: %v", err)
+		}
+	}
+	exp, err := s.CreateAccountsBatch(ctx, "", 1, &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.DeleteAccount(ctx, exp[0].ID) })
+	if _, err := s.GetAccountByAPIKey(ctx, exp[0].APIKey); err == nil {
+		t.Fatal("expired key must not authenticate")
+	}
+	perm, err := s.CreateAccount(ctx, "it_perm_"+uuid.NewString()[:6])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.DeleteAccount(ctx, perm.ID) })
+	if got, err := s.GetAccountByAPIKey(ctx, perm.APIKey); err != nil || got.ExpiresAt != nil {
+		t.Fatalf("permanent key: %v", err)
+	}
+}
