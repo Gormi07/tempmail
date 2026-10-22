@@ -18,8 +18,11 @@ CREATE TABLE accounts (
     is_admin    BOOLEAN      NOT NULL DEFAULT FALSE,
     is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ  NULL -- NULL = 永久有效
 );
+
+CREATE INDEX idx_accounts_expires_at ON accounts (expires_at) WHERE expires_at IS NOT NULL;
 
 -- API Key 查询走 B-tree 索引（认证热路径）
 CREATE INDEX idx_accounts_api_key ON accounts (api_key);

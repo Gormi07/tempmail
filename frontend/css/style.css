@@ -973,9 +973,10 @@ tr:hover td { background: rgba(79,111,82,0.055); }
 .dns-table td { font-family: var(--font-mono); }
 
 /* 通知 Toast */
+/* 抬高到右下角悬浮按钮（微信客服 / GitHub，bottom 1.25rem + 高 3rem）之上，避免遮挡 */
 #toast-container {
   position: fixed;
-  bottom: 1.5rem;
+  bottom: calc(1.25rem + 3rem + 0.75rem);
   right: 1.5rem;
   z-index: 9999;
   display: flex;
@@ -1524,3 +1525,28 @@ tr:hover td { background: rgba(79,111,82,0.055); }
 [data-theme="dark"] .auth-card .auth-logo p {
   color: #8B9691;
 }
+
+@media (max-width: 600px) {
+  #toast-container { bottom: calc(0.85rem + 2.65rem + 0.6rem); right: 0.85rem; }
+}
+
+/* 首页购买提示条 */
+.buy-notice {
+  margin-top: 0.25rem;
+  padding: 0.75rem 1rem;
+  text-align: center;
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.6;
+  color: var(--text);
+  background: rgba(124, 72, 80, 0.08);
+  border: 1px solid rgba(124, 72, 80, 0.28);
+  border-radius: var(--radius-sm);
+}
+.buy-notice a {
+  color: var(--clr-danger);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.buy-notice a:hover { opacity: 0.85; }
+.buy-notice .buy-price { color: var(--clr-danger); }

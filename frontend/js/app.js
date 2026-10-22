@@ -102,11 +102,7 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function formatDate(s) {
-  if (!s) return '—';
-  const d = new Date(s);
-  return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-}
+// formatDate 定义于 js/datefmt.js（固定 Asia/Shanghai 时区）
 
 function timeAgo(s) {
   if (!s) return '—';
@@ -316,7 +312,7 @@ async function tryLogin(key) {
     toast(`欢迎回来，${acct.username || '用户'}`, 'success');
   } catch (e) {
     state.apiKey = '';
-    toast('API Key 无效: ' + e.message, 'error');
+    toast(e.message, 'error');
   }
 }
 
@@ -335,7 +331,7 @@ async function restoreSession(key) {
     localStorage.removeItem('tm_apikey');
     localStorage.removeItem('tm_account');
     showAuthPage();
-    toast('登录状态已失效，请重新登录', 'warn');
+    toast(e.status === 401 && e.message ? e.message : '登录状态已失效，请重新登录', 'warn');
   }
 }
 
@@ -468,8 +464,8 @@ function renderLoginForm() {
     ` : ''}
     ${!showKeyLogin && !oauthLogin ? `<div style="text-align:center;color:var(--text-muted);line-height:1.8">当前没有启用任何登录方式，请联系管理员。</div>` : ''}
     <div class="divider"></div>
-    <div style="text-align:center;font-size:0.78rem;color:var(--text-muted)">
-      没有账户？联系管理员创建，或点击上方"注册账户"
+    <div class="buy-notice">
+      没有Api Key，<a href="https://shop.kejimiaozai.com/products/linshi" target="_blank" rel="noopener noreferrer">点击购买</a>，<span class="buy-price">0.2元/天</span>
     </div>
   `;
   const inp = $('login-key');
@@ -1265,7 +1261,7 @@ async function renderAdminAccounts(container, page = 1) {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>用户名</th><th>角色</th><th>收件统计</th><th>创建时间</th><th>操作</th></tr>
+            <tr><th>用户名</th><th>角色</th><th>收件统计</th><th>创建时间</th><th>到期时间</th><th>状态</th><th>操作</th></tr>
           </thead>
           <tbody>
             ${(accounts||[]).map(a => `
@@ -1286,6 +1282,8 @@ async function renderAdminAccounts(container, page = 1) {
                   <div style="color:var(--text-muted)">邮箱：${a.active_mailbox_count || 0}/${a.mailbox_count || 0}</div>
                 </td>
                 <td style="font-size:0.8rem">${formatDate(a.created_at)}</td>
+                <td style="font-size:0.8rem">${a.expires_at ? formatDate(a.expires_at) : '—'}</td>
+                <td>${accountStatusBadge(a)}</td>
                 <td>
                   ${!a.is_admin ? `<button class="btn btn-danger btn-sm" onclick="confirmDeleteAccount('${a.id}','${escHtml(a.username||'')}')">删除</button>` : ''}
                 </td>
@@ -1303,28 +1301,81 @@ async function renderAdminAccounts(container, page = 1) {
   `;
 }
 
+function accountStatusBadge(a) {
+  if (!a.expires_at) return '<span class="badge badge-gray">永久</span>';
+  return new Date(a.expires_at).getTime() > Date.now()
+    ? '<span class="badge badge-green">有效</span>'
+    : '<span class="badge badge-red">已过期</span>';
+}
+
 window.showCreateAccountModal = function() {
-  showModal('创建账户', `
+  showModal('创建账户 / 批量生成 API Key', `
     <div class="form-group">
-      <label class="form-label">用户名</label>
-      <input class="form-input" id="new-acc-username" placeholder="username" />
+      <label class="form-label">生成数量</label>
+      <input class="form-input" id="new-acc-count" type="number" min="1" max="500" value="1" />
     </div>
     <div class="form-group">
-      <label class="form-label">
-        <input type="checkbox" id="new-acc-admin" style="margin-right:0.4rem">
-        设为管理员
-      </label>
+      <label class="form-label">用户名 / 前缀（可选，批量时作为前缀）</label>
+      <input class="form-input" id="new-acc-username" placeholder="留空自动生成" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">有效期（0 或留空 = 永久）</label>
+      <div style="display:flex;gap:0.5rem">
+        <input class="form-input" id="new-acc-validity" type="number" min="0" max="3650" value="30" style="flex:1" />
+        <select class="form-input" id="new-acc-unit" style="width:6rem">
+          <option value="day">天</option>
+          <option value="month">月</option>
+        </select>
+      </div>
     </div>
   `, async () => {
     const username = ($('new-acc-username')?.value || '').trim();
-    if (!username) { toast('请输入用户名', 'warn'); return false; }
-    const is_admin = $('new-acc-admin')?.checked || false;
+    const count = parseInt($('new-acc-count')?.value || '1', 10);
+    const validity = parseInt($('new-acc-validity')?.value || '0', 10) || 0;
+    const validity_unit = $('new-acc-unit')?.value || 'day';
+    if (!(count >= 1 && count <= 500)) { toast('数量需在 1-500 之间', 'warn'); return false; }
+    if (validity < 0) { toast('有效期不能为负数', 'warn'); return false; }
     try {
-      await api.admin.createAccount({ username, is_admin });
-      toast('账户已创建', 'success');
+      const res = await api.admin.createAccount({ username, count, validity, validity_unit });
+      const list = res.accounts || [{ username: res.username, api_key: res.api_key, expires_at: res.expires_at }];
+      toast(`已生成 ${list.length} 个 API Key`, 'success');
       navigate('admin-accounts');
+      setTimeout(() => showGeneratedKeys(list), 0);
     } catch(e) { toast('创建失败: ' + e.message, 'error'); return false; }
   });
+};
+
+let lastGeneratedKeys = [];
+function showGeneratedKeys(list) {
+  lastGeneratedKeys = list;
+  showModal(`已生成 ${list.length} 个 API Key`, `
+    <p style="font-size:0.78rem;color:var(--text-muted)">请立即复制或导出保存。</p>
+    <textarea class="form-input" readonly style="width:100%;height:12rem;font-family:monospace;font-size:0.78rem">${escHtml(list.map(a => a.api_key).join('\n'))}</textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.6rem;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="copyGeneratedKeys()">一键复制全部</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportGeneratedKeys('txt')">导出 TXT</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportGeneratedKeys('csv')">导出 CSV</button>
+    </div>
+  `, async () => true, { confirmText: '完成', hideCancel: true });
+}
+window.copyGeneratedKeys = () => copyText(lastGeneratedKeys.map(a => a.api_key).join('\n'));
+window.exportGeneratedKeys = function(fmt) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  let content, mime;
+  if (fmt === 'csv') {
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    content = '\ufeffusername,api_key,expires_at\n' +
+      lastGeneratedKeys.map(a => [a.username, a.api_key, a.expires_at || '永久'].map(q).join(',')).join('\n');
+    mime = 'text/csv;charset=utf-8';
+  } else {
+    content = lastGeneratedKeys.map(a => a.api_key).join('\n') + '\n';
+    mime = 'text/plain;charset=utf-8';
+  }
+  const url = URL.createObjectURL(new Blob([content], { type: mime }));
+  const link = document.createElement('a');
+  link.href = url; link.download = `api-keys-${stamp}.${fmt}`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 window.confirmDeleteAccount = function(id, name) {
@@ -1836,7 +1887,7 @@ window.saveLoginSetting = async function(key, enabled, label) {
 };
 
 // ─── Modal ────────────────────────────────────────────────
-function showModal(title, bodyHtml, onConfirm) {
+function showModal(title, bodyHtml, onConfirm, opts = {}) {
   const old = document.querySelector('.modal-overlay');
   if (old) old.remove();
 
@@ -1847,8 +1898,8 @@ function showModal(title, bodyHtml, onConfirm) {
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">${icon('x')}</button>
       ${bodyHtml}
       <div class="modal-actions">
-        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">取消</button>
-        <button class="btn btn-primary" id="modal-confirm-btn">确认</button>
+        ${opts.hideCancel ? '' : `<button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">${escHtml(opts.cancelText || '取消')}</button>`}
+        <button class="btn btn-primary" id="modal-confirm-btn">${escHtml(opts.confirmText || '确认')}</button>
       </div>
     </div>
   `;

@@ -1,19 +1,29 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"tempmail/model"
-	"tempmail/store"
 
 	"github.com/gin-gonic/gin"
 )
 
 const AccountKey = "account"
 
-// Auth API Key 认证中间件
-func Auth(s *store.Store) gin.HandlerFunc {
+// AccountLookup 是认证所需的最小存储接口（*store.Store 已实现）。
+type AccountLookup interface {
+	GetAccountByAPIKey(ctx context.Context, apiKey string) (*model.Account, error)
+}
+
+// now 便于测试替换。
+var now = time.Now
+
+// Auth API Key 认证中间件。过期的 Key（expires_at <= now）一律拒绝。
+func Auth(s AccountLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("Authorization")
 		if apiKey == "" {
@@ -36,8 +46,14 @@ func Auth(s *store.Store) gin.HandlerFunc {
 
 		account, err := s.GetAccountByAPIKey(c.Request.Context(), apiKey)
 		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": AuthErrorMessage(err)})
+			return
+		}
+
+		// SQL 已过滤过期账户，这里再做一次校验作为兜底。
+		if account.IsExpired(now()) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid api_key",
+				"error": model.MsgKeyExpired,
 			})
 			return
 		}
@@ -45,6 +61,14 @@ func Auth(s *store.Store) gin.HandlerFunc {
 		c.Set(AccountKey, account)
 		c.Next()
 	}
+}
+
+// AuthErrorMessage 把查找 Key 的错误映射为面向用户的提示：过期 → 「Key已过期」，其余 → 「Key错误」。
+func AuthErrorMessage(err error) string {
+	if errors.Is(err, model.ErrAPIKeyExpired) {
+		return model.MsgKeyExpired
+	}
+	return model.MsgKeyInvalid
 }
 
 // AdminOnly 管理员权限中间件
