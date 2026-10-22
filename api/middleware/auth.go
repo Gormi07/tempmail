@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -45,16 +46,14 @@ func Auth(s AccountLookup) gin.HandlerFunc {
 
 		account, err := s.GetAccountByAPIKey(c.Request.Context(), apiKey)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid api_key",
-			})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": AuthErrorMessage(err)})
 			return
 		}
 
 		// SQL 已过滤过期账户，这里再做一次校验作为兜底。
 		if account.IsExpired(now()) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "api_key expired",
+				"error": model.MsgKeyExpired,
 			})
 			return
 		}
@@ -62,6 +61,14 @@ func Auth(s AccountLookup) gin.HandlerFunc {
 		c.Set(AccountKey, account)
 		c.Next()
 	}
+}
+
+// AuthErrorMessage 把查找 Key 的错误映射为面向用户的提示：过期 → 「Key已过期」，其余 → 「Key错误」。
+func AuthErrorMessage(err error) string {
+	if errors.Is(err, model.ErrAPIKeyExpired) {
+		return model.MsgKeyExpired
+	}
+	return model.MsgKeyInvalid
 }
 
 // AdminOnly 管理员权限中间件

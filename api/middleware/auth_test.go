@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,9 @@ import (
 type fakeLookup map[string]*model.Account
 
 func (f fakeLookup) GetAccountByAPIKey(_ context.Context, k string) (*model.Account, error) {
+	if k == "expired-db" {
+		return nil, model.ErrAPIKeyExpired
+	}
 	if a, ok := f[k]; ok {
 		return a, nil
 	}
@@ -36,7 +40,15 @@ func TestAuthExpiry(t *testing.T) {
 	}
 	r := gin.New()
 	r.GET("/x", Auth(store), func(c *gin.Context) { c.Status(http.StatusOK) })
-	cases := map[string]int{"perm": 200, "valid": 200, "expired": 401, "edge": 401, "nope": 401, "": 401}
+	type exp struct {
+		code int
+		msg  string
+	}
+	cases := map[string]exp{
+		"perm": {200, ""}, "valid": {200, ""},
+		"expired": {401, "Key已过期"}, "edge": {401, "Key已过期"}, "expired-db": {401, "Key已过期"},
+		"nope": {401, "Key错误"}, "": {401, ""},
+	}
 	for key, want := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
 		if key != "" {
@@ -44,8 +56,11 @@ func TestAuthExpiry(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		if w.Code != want {
-			t.Errorf("key %q: got %d want %d (%s)", key, w.Code, want, w.Body.String())
+		if w.Code != want.code {
+			t.Errorf("key %q: got %d want %d (%s)", key, w.Code, want.code, w.Body.String())
+		}
+		if want.msg != "" && !strings.Contains(w.Body.String(), `"error":"`+want.msg+`"`) {
+			t.Errorf("key %q: body %s, want message %s", key, w.Body.String(), want.msg)
 		}
 	}
 }

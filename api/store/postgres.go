@@ -158,15 +158,20 @@ func (s *Store) Close() {
 
 // ==================== Account ====================
 
+// ErrAPIKeyExpired 表示 API Key 存在但已过期。
+var ErrAPIKeyExpired = model.ErrAPIKeyExpired
+
 func (s *Store) GetAccountByAPIKey(ctx context.Context, apiKey string) (*model.Account, error) {
 	var a model.Account
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, username, api_key, COALESCE(linuxdo_id, ''), is_admin, is_active, created_at, updated_at, expires_at
-		 FROM accounts WHERE api_key = $1 AND is_active = TRUE
-		   AND (expires_at IS NULL OR expires_at > NOW())`, apiKey,
+		 FROM accounts WHERE api_key = $1 AND is_active = TRUE`, apiKey,
 	).Scan(&a.ID, &a.Username, &a.APIKey, &a.LinuxDOID, &a.IsAdmin, &a.IsActive, &a.CreatedAt, &a.UpdatedAt, &a.ExpiresAt)
 	if err != nil {
 		return nil, err
+	}
+	if a.IsExpired(time.Now()) {
+		return nil, ErrAPIKeyExpired
 	}
 	return &a, nil
 }

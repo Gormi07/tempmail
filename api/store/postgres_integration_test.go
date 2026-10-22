@@ -471,8 +471,11 @@ func TestIntegrationAccountExpiryAndBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.DeleteAccount(ctx, exp[0].ID) })
-	if _, err := s.GetAccountByAPIKey(ctx, exp[0].APIKey); err == nil {
-		t.Fatal("expired key must not authenticate")
+	if _, err := s.GetAccountByAPIKey(ctx, exp[0].APIKey); !errors.Is(err, ErrAPIKeyExpired) {
+		t.Fatalf("expired key must return ErrAPIKeyExpired, got %v", err)
+	}
+	if _, err := s.GetAccountByAPIKey(ctx, "tm_does_not_exist"); err == nil || errors.Is(err, ErrAPIKeyExpired) {
+		t.Fatalf("unknown key must return a non-expired error, got %v", err)
 	}
 	perm, err := s.CreateAccount(ctx, "it_perm_"+uuid.NewString()[:6])
 	if err != nil {

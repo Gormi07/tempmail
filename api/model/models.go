@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,27 @@ func (a *Account) IsExpired(now time.Time) bool {
 	return a.ExpiresAt != nil && !now.Before(*a.ExpiresAt)
 }
 
+// 鉴权错误信息（直接展示给用户）。
+const (
+	MsgKeyExpired = "Key已过期"
+	MsgKeyInvalid = "Key错误"
+)
+
+// ErrAPIKeyExpired 表示 API Key 存在但已过期。
+var ErrAPIKeyExpired = errors.New(MsgKeyExpired)
+
+// AddMonthsClamped 加 n 个自然月，保持同一日；目标月没有该日时取当月最后一天
+// （1/31 +1 月 → 2/29 或 2/28）。时分秒与时区保持不变。
+func AddMonthsClamped(t time.Time, n int) time.Time {
+	y, m, d := t.Date()
+	first := time.Date(y, m+time.Month(n), 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	lastDay := first.AddDate(0, 1, -1).Day()
+	if d > lastDay {
+		d = lastDay
+	}
+	return first.AddDate(0, 0, d-1)
+}
+
 // ComputeExpiry 根据有效期数值与单位（day/month）计算到期时间；amount<=0 表示永久（返回 nil）。
 func ComputeExpiry(now time.Time, amount int, unit string) (*time.Time, error) {
 	if amount <= 0 {
@@ -36,7 +58,7 @@ func ComputeExpiry(now time.Time, amount int, unit string) (*time.Time, error) {
 	case "", "day", "days", "d":
 		t = now.AddDate(0, 0, amount)
 	case "month", "months", "m":
-		t = now.AddDate(0, amount, 0)
+		t = AddMonthsClamped(now, amount)
 	default:
 		return nil, fmt.Errorf("invalid validity unit %q: use day or month", unit)
 	}

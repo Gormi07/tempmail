@@ -316,7 +316,7 @@ async function tryLogin(key) {
     toast(`欢迎回来，${acct.username || '用户'}`, 'success');
   } catch (e) {
     state.apiKey = '';
-    toast('API Key 无效: ' + e.message, 'error');
+    toast(e.message, 'error');
   }
 }
 
@@ -335,7 +335,7 @@ async function restoreSession(key) {
     localStorage.removeItem('tm_apikey');
     localStorage.removeItem('tm_account');
     showAuthPage();
-    toast('登录状态已失效，请重新登录', 'warn');
+    toast(e.status === 401 && e.message ? e.message : '登录状态已失效，请重新登录', 'warn');
   }
 }
 

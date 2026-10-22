@@ -37,7 +37,7 @@ func (h *AccountHandler) KeyLogin(c *gin.Context) {
 
 	account, err := h.store.GetAccountByAPIKey(c.Request.Context(), strings.TrimSpace(req.APIKey))
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api_key"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": middleware.AuthErrorMessage(err)})
 		return
 	}
 	if keyLogin == "false" && !account.IsAdmin {
