@@ -189,7 +189,8 @@ const api = {
   deleteEmail:(mid, eid) => apiFetch(API_BASE + '/mailboxes/' + mid + '/emails/' + eid, { method: 'DELETE' }),
   // 管理
   admin: {
-    listAccounts:  (page=1,size=10) => apiFetch(API_BASE + '/admin/accounts?page='+page+'&size='+size),
+    listAccounts:  (page=1,size=10,q='',status='') => apiFetch(API_BASE + '/admin/accounts?' + new URLSearchParams({ page, size, q, status })),
+    batchDeleteAccounts: ids => apiFetch(API_BASE + '/admin/accounts/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
     createAccount: body => apiFetch(API_BASE + '/admin/accounts', { method: 'POST', body: JSON.stringify(body) }),
     deleteAccount: id   => apiFetch(API_BASE + '/admin/accounts/' + id, { method: 'DELETE' }),
     addDomain:   body => apiFetch(API_BASE + '/admin/domains', { method: 'POST', body: JSON.stringify(body) }),
@@ -1247,31 +1248,62 @@ async function renderDomainsGuide(container) {
 }
 
 // ─── Admin: 账户管理 ─────────────────────────────────────────
+// 账户列表视图状态：筛选条件跨刷新保留；选择仅针对当前页，翻页/筛选时清空。
+const accountsView = { q: '', status: '', page: 1, selected: new Set(), selectable: [] };
+
 async function renderAdminAccounts(container, page = 1) {
   const actions = $('topbar-actions');
   if (actions) {
     actions.innerHTML = `<button class="btn btn-primary btn-sm" onclick="showCreateAccountModal()">${iconButton('plus', '创建账户')}</button>`;
   }
+  container = container || document.getElementById('page-content');
+  accountsView.page = page;
+  accountsView.selected = new Set();
 
   const size = 10;
-  const res = await api.admin.listAccounts(page, size);
+  const res = await api.admin.listAccounts(page, size, accountsView.q, accountsView.status);
   const accounts = res.data || [];
   const total = res.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / size));
+  if (!accounts.length && page > totalPages) return renderAdminAccounts(container, totalPages);
+  const myId = state.account && state.account.id;
+  const canSelect = a => !a.is_admin && a.id !== myId;
+  accountsView.selectable = accounts.filter(canSelect).map(a => a.id);
+  const statusOpts = [['', '全部'], ['active', '有效'], ['expired', '已过期'], ['permanent', '永久']];
+
   container.innerHTML = `
-    <div class="card" style="max-width:980px">
-      <div class="card-header">
+    <div class="card" style="max-width:1080px">
+      <div class="card-header" style="flex-wrap:wrap;gap:0.6rem">
         <div class="card-title">${icon('users')} 账户列表</div>
         <div style="font-size:0.78rem;color:var(--text-muted)">共 ${total} 个账户 · 第 ${page}/${totalPages} 页</div>
+      </div>
+      <div class="acc-toolbar">
+        <div class="acc-filters">
+          <input class="form-input acc-search" id="acc-search" placeholder="搜索用户名或 API Key 片段" value="${escHtml(accountsView.q)}" />
+          <select class="form-input acc-status" id="acc-status" aria-label="状态筛选">
+            ${statusOpts.map(([v, l]) => `<option value="${v}" ${accountsView.status === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <div class="acc-filter-btns">
+            <button class="btn btn-secondary btn-sm" onclick="applyAccountFilter()">搜索</button>
+            ${accountsView.q || accountsView.status ? `<button class="btn btn-ghost btn-sm" onclick="resetAccountFilter()">清除筛选</button>` : ''}
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm acc-batch-btn" id="acc-batch-delete" style="display:none" onclick="confirmBatchDeleteAccounts()"></button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>用户名</th><th>角色</th><th>收件统计</th><th>创建时间</th><th>到期时间</th><th>状态</th><th>操作</th></tr>
+            <tr>
+              <th style="width:2rem"><input type="checkbox" id="acc-select-all" title="全选本页" ${accountsView.selectable.length ? '' : 'disabled'} onchange="toggleSelectAllAccounts(this.checked)"></th>
+              <th>用户名</th><th>角色</th><th>收件统计</th><th>创建时间</th><th>到期时间</th><th>状态</th><th>操作</th>
+            </tr>
           </thead>
           <tbody>
-            ${(accounts||[]).map(a => `
+            ${accounts.length ? accounts.map(a => `
               <tr>
+                <td>${canSelect(a)
+                  ? `<input type="checkbox" class="acc-check" data-id="${a.id}" onchange="toggleSelectAccount('${a.id}', this.checked)">`
+                  : `<input type="checkbox" disabled title="管理员账户不可选择">`}</td>
                 <td>
                   <div style="font-weight:600">${escHtml(a.username || '—')}</div>
                   <div class="account-key-box">
@@ -1291,21 +1323,69 @@ async function renderAdminAccounts(container, page = 1) {
                 <td style="font-size:0.8rem">${a.expires_at ? formatDate(a.expires_at) : '—'}</td>
                 <td>${accountStatusBadge(a)}</td>
                 <td>
-                  ${!a.is_admin ? `<button class="btn btn-danger btn-sm" onclick="confirmDeleteAccount('${a.id}','${escHtml(a.username||'')}')">删除</button>` : ''}
+                  ${canSelect(a) ? `<button class="btn btn-danger btn-sm" onclick="confirmDeleteAccount('${a.id}','${escHtml(a.username||'')}')">删除</button>` : ''}
                 </td>
               </tr>
-            `).join('')}
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:1.5rem">没有符合条件的账户</td></tr>`}
           </tbody>
         </table>
       </div>
       <div style="display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;margin-top:1rem">
-        <button class="btn btn-secondary btn-sm" ${page <= 1 ? 'disabled' : ''} onclick="renderAdminAccounts(document.getElementById('page-content'), ${page - 1})">上一页</button>
+        <button class="btn btn-secondary btn-sm" ${page <= 1 ? 'disabled' : ''} onclick="renderAdminAccounts(null, ${page - 1})">上一页</button>
         <span style="font-size:0.78rem;color:var(--text-muted)">${page} / ${totalPages}</span>
-        <button class="btn btn-secondary btn-sm" ${page >= totalPages ? 'disabled' : ''} onclick="renderAdminAccounts(document.getElementById('page-content'), ${page + 1})">下一页</button>
+        <button class="btn btn-secondary btn-sm" ${page >= totalPages ? 'disabled' : ''} onclick="renderAdminAccounts(null, ${page + 1})">下一页</button>
       </div>
     </div>
   `;
+  const inp = $('acc-search');
+  if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') applyAccountFilter(); });
+  const sel = $('acc-status');
+  if (sel) sel.addEventListener('change', applyAccountFilter);
+  updateAccountSelectionUI();
 }
+
+function updateAccountSelectionUI() {
+  const n = accountsView.selected.size;
+  const btn = $('acc-batch-delete');
+  if (btn) { btn.style.display = n ? '' : 'none'; btn.textContent = `删除所选（${n}）`; }
+  const all = $('acc-select-all');
+  if (all) {
+    const m = accountsView.selectable.length;
+    all.checked = m > 0 && n === m;
+    all.indeterminate = n > 0 && n < m;
+  }
+}
+
+window.applyAccountFilter = function() {
+  accountsView.q = ($('acc-search')?.value || '').trim();
+  accountsView.status = $('acc-status')?.value || '';
+  renderAdminAccounts(null, 1).catch(e => toast(errMsg(e, '加载失败'), 'error'));
+};
+window.resetAccountFilter = function() {
+  accountsView.q = ''; accountsView.status = '';
+  renderAdminAccounts(null, 1).catch(e => toast(errMsg(e, '加载失败'), 'error'));
+};
+window.toggleSelectAccount = function(id, checked) {
+  if (!accountsView.selectable.includes(id)) return;
+  if (checked) accountsView.selected.add(id); else accountsView.selected.delete(id);
+  updateAccountSelectionUI();
+};
+window.toggleSelectAllAccounts = function(checked) {
+  accountsView.selected = new Set(checked ? accountsView.selectable : []);
+  document.querySelectorAll('.acc-check').forEach(cb => { cb.checked = checked; });
+  updateAccountSelectionUI();
+};
+window.confirmBatchDeleteAccounts = function() {
+  const ids = [...accountsView.selected];
+  if (!ids.length) { toast('请至少选择一个账户', 'warn'); return; }
+  showModal('批量删除账户', `<p>确定删除所选的 <strong>${ids.length}</strong> 个账户？其下的邮箱和邮件将一并删除，此操作不可恢复。</p>`, async () => {
+    try {
+      const res = await api.admin.batchDeleteAccounts(ids);
+      toast(res.message || `已删除 ${ids.length} 个账户`, 'success');
+      await renderAdminAccounts(null, accountsView.page);
+    } catch(e) { toast(errMsg(e, '批量删除失败'), 'error'); return false; }
+  }, { confirmText: '确认删除' });
+};
 
 function accountStatusBadge(a) {
   if (!a.expires_at) return '<span class="badge badge-gray">永久</span>';

@@ -1550,3 +1550,32 @@ tr:hover td { background: rgba(79,111,82,0.055); }
 }
 .buy-notice a:hover { opacity: 0.85; }
 .buy-notice .buy-price { color: var(--clr-danger); }
+
+/* 账户管理工具栏：可换行，搜索框弹性宽度，删除所选右对齐 */
+.acc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+  margin-bottom: 0.9rem;
+  min-width: 0;
+}
+.acc-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.acc-search { flex: 1 1 220px; min-width: 160px; max-width: 100%; }
+.acc-status { flex: 0 0 8rem; width: 8rem; }
+.acc-filter-btns { display: flex; gap: 0.5rem; flex: 0 0 auto; }
+.acc-filter-btns .btn, .acc-batch-btn { white-space: nowrap; }
+.acc-batch-btn { margin-left: auto; flex: 0 0 auto; }
+@media (max-width: 600px) {
+  .acc-filters { flex-basis: 100%; }
+  .acc-search { flex-basis: 100%; min-width: 0; }
+  .acc-status { flex: 1 1 auto; width: auto; }
+  .acc-batch-btn { margin-left: 0; width: 100%; }
+}

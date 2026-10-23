@@ -290,18 +290,98 @@ func (s *Store) CreateAccountsBatch(ctx context.Context, prefix string, count in
 	return out, nil
 }
 
+// ErrAdminAccountProtected 表示试图删除管理员账户。
+var ErrAdminAccountProtected = errors.New("管理员账户不可删除")
+
+// DeleteAccount 删除单个普通账户；邮箱和邮件随外键 ON DELETE CASCADE 一并删除。管理员账户不可删除。
 func (s *Store) DeleteAccount(ctx context.Context, accountID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, accountID)
+	_, err := s.DeleteAccounts(ctx, []uuid.UUID{accountID})
 	return err
 }
 
-func (s *Store) ListAccounts(ctx context.Context, page, size int) ([]model.AccountWithStats, int, error) {
-	var total int
-	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM accounts`).Scan(&total)
+// DeleteAccounts 在单个事务内批量删除普通账户，返回实际删除数。
+// 与单个删除一致：邮箱和邮件由外键 ON DELETE CASCADE 级联删除。
+// 只要列表中包含管理员账户，整批回滚并返回 ErrAdminAccountProtected。
+func (s *Store) DeleteAccounts(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = id.String()
+	}
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var adminCount int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM (SELECT 1 FROM accounts WHERE id = ANY($1::uuid[]) AND is_admin = TRUE FOR UPDATE) t`, idStrs,
+	).Scan(&adminCount); err != nil {
+		return 0, err
+	}
+	if adminCount > 0 {
+		return 0, ErrAdminAccountProtected
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = ANY($1::uuid[]) AND is_admin = FALSE`, idStrs)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AccountFilter 账户列表筛选条件。
+type AccountFilter struct {
+	Query  string // 模糊匹配用户名或 API Key 片段（不区分大小写）
+	Status string // "" | all | active | expired | permanent
+}
+
+// ValidAccountStatus 判断筛选状态是否合法。
+func ValidAccountStatus(st string) bool {
+	switch st {
+	case "", "all", "active", "expired", "permanent":
+		return true
+	}
+	return false
+}
+
+func (f AccountFilter) where() (string, []any) {
+	conds := []string{"TRUE"}
+	args := []any{}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+		args = append(args, "%"+esc+"%")
+		conds = append(conds, fmt.Sprintf("(a.username ILIKE $%d OR a.api_key ILIKE $%d)", len(args), len(args)))
+	}
+	switch f.Status {
+	case "active":
+		conds = append(conds, "a.expires_at IS NOT NULL AND a.expires_at > NOW()")
+	case "expired":
+		conds = append(conds, "a.expires_at IS NOT NULL AND a.expires_at <= NOW()")
+	case "permanent":
+		conds = append(conds, "a.expires_at IS NULL")
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+func (s *Store) ListAccounts(ctx context.Context, page, size int) ([]model.AccountWithStats, int, error) {
+	return s.ListAccountsFiltered(ctx, AccountFilter{}, page, size)
+}
+
+// ListAccountsFiltered 按筛选条件分页列出账户。
+func (s *Store) ListAccountsFiltered(ctx context.Context, f AccountFilter, page, size int) ([]model.AccountWithStats, int, error) {
+	where, args := f.where()
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM accounts a WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-
+	n := len(args)
+	args = append(args, size, (page-1)*size)
 	rows, err := s.pool.Query(ctx,
 		`SELECT
 			a.id, a.username, a.api_key, COALESCE(a.linuxdo_id, ''), a.is_admin, a.is_active, a.created_at, a.updated_at, a.expires_at,
@@ -313,8 +393,9 @@ func (s *Store) ListAccounts(ctx context.Context, page, size int) ([]model.Accou
 			 WHERE m.account_id = a.id) AS current_email_count,
 			COALESCE((SELECT SUM(m.received_email_count)::BIGINT FROM mailboxes m WHERE m.account_id = a.id), 0) AS received_email_count
 		 FROM accounts a
-		 ORDER BY a.created_at DESC LIMIT $1 OFFSET $2`,
-		size, (page-1)*size,
+		 WHERE `+where+fmt.Sprintf(`
+		 ORDER BY a.created_at DESC, a.id LIMIT $%d OFFSET $%d`, n+1, n+2),
+		args...,
 	)
 	if err != nil {
 		return nil, 0, err
