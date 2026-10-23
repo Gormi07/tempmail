@@ -1277,14 +1277,18 @@ async function renderAdminAccounts(container, page = 1) {
         <div class="card-title">${icon('users')} 账户列表</div>
         <div style="font-size:0.78rem;color:var(--text-muted)">共 ${total} 个账户 · 第 ${page}/${totalPages} 页</div>
       </div>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.8rem">
-        <input class="form-input" id="acc-search" style="flex:1;min-width:200px" placeholder="搜索用户名或 API Key 片段" value="${escHtml(accountsView.q)}" />
-        <select class="form-input" id="acc-status" style="width:8rem">
-          ${statusOpts.map(([v, l]) => `<option value="${v}" ${accountsView.status === v ? 'selected' : ''}>${l}</option>`).join('')}
-        </select>
-        <button class="btn btn-secondary btn-sm" onclick="applyAccountFilter()">搜索</button>
-        ${accountsView.q || accountsView.status ? `<button class="btn btn-ghost btn-sm" onclick="resetAccountFilter()">清除筛选</button>` : ''}
-        <button class="btn btn-danger btn-sm" id="acc-batch-delete" style="display:none" onclick="confirmBatchDeleteAccounts()"></button>
+      <div class="acc-toolbar">
+        <div class="acc-filters">
+          <input class="form-input acc-search" id="acc-search" placeholder="搜索用户名或 API Key 片段" value="${escHtml(accountsView.q)}" />
+          <select class="form-input acc-status" id="acc-status" aria-label="状态筛选">
+            ${statusOpts.map(([v, l]) => `<option value="${v}" ${accountsView.status === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <div class="acc-filter-btns">
+            <button class="btn btn-secondary btn-sm" onclick="applyAccountFilter()">搜索</button>
+            ${accountsView.q || accountsView.status ? `<button class="btn btn-ghost btn-sm" onclick="resetAccountFilter()">清除筛选</button>` : ''}
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm acc-batch-btn" id="acc-batch-delete" style="display:none" onclick="confirmBatchDeleteAccounts()"></button>
       </div>
       <div class="table-wrap">
         <table>
