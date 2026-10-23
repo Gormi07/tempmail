@@ -12,6 +12,8 @@ import (
 	"tempmail/model"
 	"tempmail/store"
 
+	"github.com/google/uuid"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -147,7 +149,17 @@ func (h *AccountHandler) List(c *gin.Context) {
 		size = 20
 	}
 
-	accounts, total, err := h.store.ListAccounts(c.Request.Context(), page, size)
+	filter := store.AccountFilter{Query: c.Query("q"), Status: c.Query("status")}
+	if !store.ValidAccountStatus(filter.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "状态筛选无效，只能是全部、有效、已过期或永久"})
+		return
+	}
+	if len([]rune(filter.Query)) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "搜索内容过长，最多 100 个字符"})
+		return
+	}
+
+	accounts, total, err := h.store.ListAccountsFiltered(c.Request.Context(), filter, page, size)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
@@ -170,11 +182,76 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.store.DeleteAccount(c.Request.Context(), id); err != nil {
+		if errors.Is(err, store.ErrAdminAccountProtected) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "管理员账户不可删除"})
+			return
+		}
 		respondError(c, http.StatusInternalServerError, MsgInternal, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "账户已删除"})
+}
+
+// MaxBatchDelete 单次批量删除上限。
+const MaxBatchDelete = 500
+
+// ParseBatchDeleteIDs 校验并去重批量删除的账户 ID。
+func ParseBatchDeleteIDs(raw []string) ([]uuid.UUID, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("请至少选择一个账户")
+	}
+	if len(raw) > MaxBatchDelete {
+		return nil, fmt.Errorf("单次最多删除 %d 个账户", MaxBatchDelete)
+	}
+	seen := make(map[uuid.UUID]bool, len(raw))
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, r := range raw {
+		id, err := parseUUID(strings.TrimSpace(r))
+		if err != nil {
+			return nil, errors.New("账户 ID 无效")
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// POST /api/admin/accounts/batch-delete - 批量删除账户（管理员）
+// body: {"ids": ["uuid", ...]}
+func (h *AccountHandler) BatchDelete(c *gin.Context) {
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, MsgBadRequest, err)
+		return
+	}
+	ids, err := ParseBatchDeleteIDs(req.IDs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // 自定义中文校验信息
+		return
+	}
+	if me := middleware.GetAccount(c); me != nil {
+		for _, id := range ids {
+			if id == me.ID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "不能删除当前登录的账户"})
+				return
+			}
+		}
+	}
+	n, err := h.store.DeleteAccounts(c.Request.Context(), ids)
+	if err != nil {
+		if errors.Is(err, store.ErrAdminAccountProtected) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "所选账户中包含管理员账户，管理员账户不可删除"})
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "批量删除失败，请稍后再试", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("已删除 %d 个账户", n), "deleted": n})
 }
 
 // GET /api/me - 查看当前账号信息

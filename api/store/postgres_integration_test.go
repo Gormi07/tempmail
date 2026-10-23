@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"tempmail/model"
 )
 
 func openIntegrationStore(tb testing.TB) *Store {
@@ -484,5 +485,96 @@ func TestIntegrationAccountExpiryAndBatch(t *testing.T) {
 	t.Cleanup(func() { _ = s.DeleteAccount(ctx, perm.ID) })
 	if got, err := s.GetAccountByAPIKey(ctx, perm.APIKey); err != nil || got.ExpiresAt != nil {
 		t.Fatalf("permanent key: %v", err)
+	}
+}
+
+func TestIntegrationBatchDeleteAndFilters(t *testing.T) {
+	s := openIntegrationStore(t)
+	ctx := context.Background()
+	tag := "bdt" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	future, past := time.Now().Add(48*time.Hour), time.Now().Add(-time.Hour)
+
+	valid, err := s.CreateAccountsBatch(ctx, tag+"_valid", 3, &future)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := s.CreateAccountsBatch(ctx, tag+"_exp", 2, &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm, err := s.CreateAccountsBatch(ctx, tag+"_perm", 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := append(append(append([]model.Account{}, valid...), expired...), perm...)
+	t.Cleanup(func() {
+		for _, a := range all {
+			_ = s.DeleteAccount(ctx, a.ID)
+		}
+	})
+
+	count := func(f AccountFilter) int {
+		_, total, err := s.ListAccountsFiltered(ctx, f, 1, 100)
+		if err != nil {
+			t.Fatalf("filter %+v: %v", f, err)
+		}
+		return total
+	}
+	for st, want := range map[string]int{"": 6, "all": 6, "active": 3, "expired": 2, "permanent": 1} {
+		if got := count(AccountFilter{Query: tag, Status: st}); got != want {
+			t.Errorf("status %q: got %d want %d", st, got, want)
+		}
+	}
+	if got := count(AccountFilter{Query: strings.ToUpper(tag + "_EXP")}); got != 2 {
+		t.Errorf("case-insensitive username search: got %d", got)
+	}
+	if got := count(AccountFilter{Query: valid[0].APIKey[5:20]}); got != 1 {
+		t.Errorf("api key fragment search: got %d", got)
+	}
+	if got := count(AccountFilter{Query: tag + "%"}); got != 0 {
+		t.Errorf("%% must be literal, got %d", got)
+	}
+	page1, total, _ := s.ListAccountsFiltered(ctx, AccountFilter{Query: tag}, 1, 4)
+	page2, _, _ := s.ListAccountsFiltered(ctx, AccountFilter{Query: tag}, 2, 4)
+	if total != 6 || len(page1) != 4 || len(page2) != 2 {
+		t.Errorf("pagination: total=%d p1=%d p2=%d", total, len(page1), len(page2))
+	}
+
+	// 给第一个有效账户挂邮箱和邮件，验证级联删除
+	_, mailboxID := createDeliveryFixture(t, s)
+	if _, err := s.pool.Exec(ctx, `UPDATE mailboxes SET account_id = $1 WHERE id = $2`, valid[0].ID, mailboxID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertEmail(ctx, mailboxID, "a@b.c", "hi", "body", "", "raw"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 含管理员时整批回滚
+	var adminID uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE is_admin = TRUE LIMIT 1`).Scan(&adminID); err == nil {
+		if _, err := s.DeleteAccounts(ctx, []uuid.UUID{valid[1].ID, adminID}); !errors.Is(err, ErrAdminAccountProtected) {
+			t.Fatalf("admin in batch: want ErrAdminAccountProtected, got %v", err)
+		}
+		if count(AccountFilter{Query: tag}) != 6 {
+			t.Fatal("batch containing admin must roll back entirely")
+		}
+		if err := s.DeleteAccount(ctx, adminID); !errors.Is(err, ErrAdminAccountProtected) {
+			t.Fatalf("single admin delete: got %v", err)
+		}
+	}
+
+	ids := []uuid.UUID{valid[0].ID, valid[1].ID, expired[0].ID, uuid.New()}
+	n, err := s.DeleteAccounts(ctx, ids)
+	if err != nil || n != 3 {
+		t.Fatalf("batch delete: n=%d err=%v", n, err)
+	}
+	if got := count(AccountFilter{Query: tag}); got != 3 {
+		t.Errorf("remaining: %d", got)
+	}
+	var mb, em int
+	_ = s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM mailboxes WHERE id = $1`, mailboxID).Scan(&mb)
+	_ = s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM emails WHERE mailbox_id = $1`, mailboxID).Scan(&em)
+	if mb != 0 || em != 0 {
+		t.Errorf("cascade: mailboxes=%d emails=%d", mb, em)
 	}
 }

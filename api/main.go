@@ -134,6 +134,7 @@ func main() {
 			admin.POST("/accounts", accountH.Create)
 			admin.GET("/accounts", accountH.List)
 			admin.DELETE("/accounts/:id", accountH.Delete)
+			admin.POST("/accounts/batch-delete", accountH.BatchDelete)
 
 			admin.POST("/domains", domainH.Add)
 			admin.POST("/domains/mx-import", domainH.MXImport)
